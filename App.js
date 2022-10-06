@@ -19,6 +19,12 @@ export default class App extends React.Component {
     //this.state = { text: ""};
   //}
 
+  //create circle button
+  renderCustomActions = (props) => {
+   return <CustomActions {...props} />;
+ };
+
+
   render() {
     return (
       <NavigationContainer>

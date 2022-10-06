@@ -3,6 +3,8 @@ import { GiftedChat, Bubble, InputToolbar } from 'react-native-gifted-chat';
 import { View, Platform, KeyboardAvoidingView, Text, StyleSheet } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
+import CustomActions from './CustomActions';
+import MapView from 'react-native-maps';
 
 const firebase = require('firebase');
 require('firebase/firestore');
@@ -18,18 +20,20 @@ appId: "1:915003979239:web:88668c9aab6c32d6783942",
 measurementId: "G-707VW0VG1Z"
 };
 
-class Chat extends Component {
+export default class Chat extends Component {
   constructor(){
     super();
     this.state ={
       messages: [],
       uid: 0,
       user: {
-        _id: "",
-        name: "",
-        avatar: "",
+        _id: '',
+        name: '',
+        avatar: '',
       },
       isConnected: false,
+      image: null,
+      location: null
     }
 
     // initializes the Firestore app
@@ -37,53 +41,33 @@ class Chat extends Component {
       firebase.initializeApp(firebaseConfig);
     }
     //Stores and retrieves the chat messages users send
-    this.referenceChatMessages = firebase.firestore().collection("messages");
-
-    this.referenceMessagesUser= null;
+    this.referenceChatMessages = firebase.firestore().collection('messages');
   }
-  componentDidMount() {
 
-    let { name} = this.props.route.params;
-    this.props.navigation.setOptions({ title: name });
-
-    // Reference to load messages via Firebase
-    this.referenceChatMessages = firebase.firestore().collection("messages");
-
-
-    NetInfo.fetch().then(connection => {
-      if (connection.isConnected) {
-        this.setState({ isConnected: true });
-        console.log('online');
-      } else {
-        console.log('offline');
-      }
-      // Authenticates user via Firebase
-    this.authUnsubscribe = firebase.auth().onAuthStateChanged((user) => {
-      if (!user) {
-        firebase.auth().signInAnonymously();
-      }
-      this.setState({
-        uid: user.uid,
-        messages: [],
-        user: {
-          _id: user.uid,
-          name: name,
-          avatar: "https://placeimg.com/140/140/any",
-      },
-      });
-      this.referenceMessagesUser = firebase
-                .firestore()
-                .collection("messages")
-                .where("uid", '==', this.state.uid);
-
-                // save messages when user online
-                this.saveMessages();
-      this.unsubscribe = this.referenceChatMessages
-        .orderBy("createdAt", "desc")
-
-  });
+//Retrieve collection data & store in messages
+onCollectionUpdate = (querySnapshot) => {
+    const messages = [];
+    // Go through each document
+    querySnapshot.forEach((doc) => {
+        // Get QueryDocumentSnapshot's data
+        let data = doc.data();
+        messages.push({
+            _id: data._id,
+            text: data.text || '',
+            createdAt: data.createdAt.toDate(),
+            user: {
+                _id: data.user._id,
+                name: data.user.name,
+                avatar: data.user.avatar || ''
+            },
+            image: data.image || null,
+            location: data.location || null,
+        });
     });
-}
+    this.setState({
+        messages,
+    });
+};
 
 // save messages to local storage
 async getMessages() {
@@ -117,11 +101,63 @@ async deleteMessages() {
   }
 }
 
-// stop listening to auth and collection changes
-componentWillUnmount() {
-  this.authUnsubscribe();
+componentDidMount() {
 
+    //Display username in navigation
+    let { name } = this.props.route.params;
+    this.props.navigation.setOptions({ title: name });
+
+    //If user is online --> authenticate & load messages via Firebase
+
+    NetInfo.fetch().then(connection => {
+        if (connection.isConnected) {
+            this.setState({
+                isConnected: true,
+            });
+            console.log('online');
+
+
+            //Anonymous user authentication
+            this.referenceChatMessages = firebase.firestore().collection('messages');
+
+
+            this.authUnsubscribe = firebase.auth().onAuthStateChanged((user) => {
+                if (!user) {
+                    firebase.auth().signInAnonymously();
+                }
+                this.setState({
+                    uid: user.uid,
+                    messages: [],
+                    user: {
+                        _id: user.uid,
+                        name: name,
+                    },
+                });
+                this.unsubscribe = this.referenceChatMessages
+                    .orderBy('createdAt', 'desc')
+                    .onSnapshot(this.onCollectionUpdate);
+                this.saveMessages();
+            });
+        }
+        // If user is offline --> load & display messages from asyncStorage
+        else {
+            this.setState({
+                isConnected: false,
+            });
+            console.log('offline');
+            this.getMessages();
+        }
+    })
 }
+
+// stop listening to auth and collection changes
+
+componentWillUnmount() {
+    if (this.isConnected) {
+        this.unsubscribe();
+        this.authUnsubscribe();
+    }
+  }
 
  // Adds messages to cloud storage
  addMessages() {
@@ -129,9 +165,11 @@ componentWillUnmount() {
   this.referenceChatMessages.add({
     uid: this.state.uid,
     _id: message._id,
-    text: message.text || "",
+    text: message.text || '',
     createdAt: message.createdAt,
     user: message.user,
+    image: message.image || null,
+    location: message.location || null,
   });
 }
 
@@ -141,6 +179,7 @@ onSend(messages = []) {
   }),() => {
     this.addMessages();
     this.saveMessages();
+    this.deleteMessages();
   });
 }
 
@@ -171,22 +210,46 @@ renderBubble(props) {
   )
 }
 
+renderCustomActions = (props) => {
+    return <CustomActions {...props} />;
+};
+
+
+//Returns MapView if message contains location data
+renderCustomView(props) {
+    const { currentMessage } = props;
+    if (currentMessage.location) {
+        return (
+            <MapView
+                style={{ width: 150, height: 100, borderRadius: 13, margin: 3 }}
+                region={{
+                    latitude: currentMessage.location.latitude,
+                    longitude: currentMessage.location.longitude,
+                    latitudeDelta: 0.0922,
+                    longitudeDelta: 0.0421,
+                }}
+            />
+        );
+    }
+    return null;
+}
+
   render() {
     let { color, name } = this.props.route.params;
     return (
       <View style={[{ backgroundColor: color }, styles.container]}>
-      <GiftedChat
-      renderBubble={this.renderBubble.bind(this)}
-      messages={this.state.messages}
-      renderInputToolbar={this.renderInputToolbar.bind(this)}
-      onSend={(messages) => this.onSend(messages)}
-      user={{
-        _id: this.state.user._id,
-        name: name,
-         avatar: this.state.user.avatar
-
-      }}
-    />
+        <GiftedChat
+          renderActions={this.renderCustomActions}
+          renderCustomView={this.renderCustomView}
+          renderBubble={this.renderBubble.bind(this)}
+          messages={this.state.messages}
+          renderInputToolbar={this.renderInputToolbar.bind(this)}
+          onSend={(messages) => this.onSend(messages)}
+          user={{
+            _id: this.state.user._id,
+            name: name,
+          }}
+        />
      {/* Avoid keyboard to overlap text messages on older Andriod versions  */}
     {Platform.OS === 'android' ? <KeyboardAvoidingView behavior="height" /> : null}
     </View>
@@ -199,5 +262,3 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 })
-
-export default Chat;
